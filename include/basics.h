@@ -111,7 +111,6 @@ void advance_in_cigar(unsigned & cigar_pos,
         ++cigar_pos;
     }
 }
-
 /*! Get the positions in the read sequence that correspond to the aligned
  * positions in the reference.
  * e.g.   ref  A T C G T - A   (a) ref region [0,5] -> read region [0,4]
@@ -131,6 +130,13 @@ tuple<int, int> get_read_region_boundaries(BamAlignmentRecord const & record,
 {
     int read_region_begin;
     int read_region_end;
+
+
+
+    // std::cout << "Read name: " << record.qName << std::endl;
+    // std::cout << "ref_region_begin: " << ref_region_begin << std::endl;
+    // std::cout << "ref_region_end: " << ref_region_end << std::endl;
+
 
     if (ref_region_begin >= ref_region_end)
     {
@@ -199,7 +205,8 @@ void view_bam(std::vector<seqan::BamAlignmentRecord> & records,
               seqan::CharString ref_name,
               int start,
               int end,
-              bool long_reads)
+              bool long_reads, 
+              bool & too_many_reads)
 {
     int rID = 0;
     bool hasAlignments = false;
@@ -235,6 +242,20 @@ void view_bam(std::vector<seqan::BamAlignmentRecord> & records,
     while (!seqan::atEnd(bam_file))
     {
         seqan::readRecord(record, bam_file);
+        //dorukb 
+        // compute the non soft clip section
+        int mapped_seq_len = length(record.seq);
+        if (long_reads)
+        {
+            if ((record.cigar[0]).operation == 'S')
+            {
+                mapped_seq_len -= (record.cigar[0]).count;
+            }
+            if ((record.cigar[length(record.cigar) - 1]).operation == 'S')
+            {
+                mapped_seq_len -= (record.cigar[length(record.cigar) - 1]).count;
+            }
+        }
 
         if (record.beginPos >= end)
             break;
@@ -243,9 +264,32 @@ void view_bam(std::vector<seqan::BamAlignmentRecord> & records,
         if (record.beginPos + static_cast<int>(getAlignmentLengthInRef(record)) < start)
             continue;
 
+        // added by dorukb
+        // do not add reads with length less than 1000bp for long reads.
+
+        if ((long_reads) && (mapped_seq_len < 1000))
+        {
+            //std::cout << length(record.seq) << " is the tLen" << std::endl;
+            continue;
+        }
+
         if (!hasFlagQCNoPass(record) && !hasFlagDuplicate(record) && // passes QC
             record.mapQ >= 15)                                       // only fairly unique hits
             records.push_back(record);
+
+            // add a hard cutoff of 10,000 reads and if breaches this, zero it. 
+            // added by dorukb
+            if (records.size() > 10000)
+            {
+                //records.clear();
+                if (too_many_reads == false)
+                {   
+                    log_file << "[ERROR]: More than 10,000 illumina reads. Cancelling this variant. " << start_reading << std::endl;
+                    too_many_reads = true;
+                }
+                return;
+            }
+
     }
 }
 
